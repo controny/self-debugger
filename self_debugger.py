@@ -101,16 +101,16 @@ class SelfDebugger:
 
     def refine_code(self, execution_results):
         """
-        Generate feedback based on the execution results.
+        Refine code based on the execution results.
 
         :param execution_results: The results of code execution.
-        :return: Feedback message.
+        :return: Refinement result.
         """
         explanation = self.get_response_text(EXPLAIN_PROMPT)
         exec_res = '\n'.join([f"`{test}`: `{result}`" for test, result in execution_results.items()])
         feedback_prompt = UT_FEEDBACK_PROMPT_TEMPLATE.substitute(exec_res=exec_res)
         refined_code = self.extract_code(self.get_response_text(feedback_prompt))
-        return refined_code
+        return refined_code, explanation
 
     def debug_code(self, problem_description, test_list):
         """
@@ -118,25 +118,38 @@ class SelfDebugger:
 
         :param problem_description: The problem description.
         :param test_list: List of test cases.
-        :return: Debugged code and whether it passes the tests.
+        :return: Result of debugging.
         """
         success = False
+        refined = False  # whether the code has been refined
         code = self.generate_code(problem_description, test_list[0])
+        initial_code = code
+        explanation = ''
         logging.debug("Initial Code:")
         logging.debug(code)
-        for _ in range(self.max_debugging_steps):
+        for i in range(self.max_debugging_steps):
             execution_results = self.execute_code(code, test_list)
             logging.debug("Execution Results:")
             logging.debug(execution_results)
             if self.is_solution_correct(execution_results):
                 success = True
                 break
-            code = self.refine_code(execution_results)
+            code, explanation = self.refine_code(execution_results)
+            refined = True
             logging.debug("Refined Code:")
             logging.debug(code)
         logging.debug("History:")
         logging.debug('\n'.join([str(item) for item in self.history]))
-        return code, success
+        res = {
+            'initial_code': initial_code,
+            'refined_code': code,
+            'execution_results': execution_results,
+            'explanation': explanation,
+            'success': success,
+            'refined': refined,
+            'iterations': i + 1,
+        }
+        return res
 
     def is_solution_correct(self, execution_results):
         """
