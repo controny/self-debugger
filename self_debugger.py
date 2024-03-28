@@ -11,17 +11,19 @@ UT_FEEDBACK_PROMPT_TEMPLATE = Template("The code above fails the given unit test
 
 class SelfDebugger:
 
-    def __init__(self, model_name='gpt-3.5-turbo', max_debugging_steps=10):
+    def __init__(self, model_name='gpt-3.5-turbo', max_debugging_steps=10, temperature=0.0):
         """
         Initialize the self-debugger.
 
         :param model_name: The name of the language model to use.
         :param max_debugging_steps: Maximum number of debugging iterations.
+        :param temperature: The temperature parameter for the language model.
         """
         self.model_name = model_name
         self.llm_client = openai.OpenAI()
         self.history = []
         self.max_debugging_steps = max_debugging_steps
+        self.temperature = temperature
     
     def get_response_text(self, message):
         """
@@ -34,7 +36,8 @@ class SelfDebugger:
         self.history.append({"role": "user", "content": message})
         resp = self.llm_client.chat.completions.create(
             model=self.model_name,
-            messages=self.history
+            messages=self.history,
+            temperature=self.temperature,
         )
         response_text = resp.choices[0].message.content
         self.history.append({"role": "assistant", "content": response_text})
@@ -115,8 +118,9 @@ class SelfDebugger:
 
         :param problem_description: The problem description.
         :param test_list: List of test cases.
-        :return: Debugged code.
+        :return: Debugged code and whether it passes the tests.
         """
+        success = False
         code = self.generate_code(problem_description, test_list[0])
         logging.debug("Initial Code:")
         logging.debug(code)
@@ -125,13 +129,14 @@ class SelfDebugger:
             logging.debug("Execution Results:")
             logging.debug(execution_results)
             if self.is_solution_correct(execution_results):
+                success = True
                 break
             code = self.refine_code(execution_results)
             logging.debug("Refined Code:")
             logging.debug(code)
         logging.debug("History:")
         logging.debug('\n'.join([str(item) for item in self.history]))
-        return code  # Return the best attempt
+        return code, success
 
     def is_solution_correct(self, execution_results):
         """
