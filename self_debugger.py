@@ -7,6 +7,9 @@ from func_timeout import func_set_timeout
 import importlib
 import unittest
 import io
+import os
+import sys
+import inspect
 from collections import defaultdict
 import traceback
 
@@ -14,7 +17,7 @@ import traceback
 SYS_PROMPT = "You are an expert programming assistant."
 EXPLAIN_PROMPT = "Explain the Python code line by line."
 CODE_GEN_PROMPT_TEMPLATE = Template("Complete the class in the following code:\n${description}\nReturn the pure function code with no additional text or markup.")
-UT_FEEDBACK_PROMPT_TEMPLATE = Template("The code above fails the given unit test:\n${exec_res}\nPlease fix the Python code.")
+UT_FEEDBACK_PROMPT_TEMPLATE = Template("The code above fails the given unit tests:\n${exec_res}\nPlease fix the Python code.")
 
 class SelfDebugger:
 
@@ -32,6 +35,12 @@ class SelfDebugger:
         self.max_debugging_steps = max_debugging_steps
         self.temperature = temperature
         self.cur_task = None
+        self.log_dir = 'outputs/classeval'
+        os.makedirs(self.log_dir, exist_ok=True)
+        # Get the absolute path of the directory of the module
+        module_dir = os.path.abspath(self.log_dir)
+        # Add the directory of the module to the system path to enable importing the generated module
+        sys.path.insert(0, module_dir)
     
     def get_response_text(self, message):
         """
@@ -93,48 +102,61 @@ class SelfDebugger:
             {"role": "system", "content": SYS_PROMPT},
         ]
         prompt = CODE_GEN_PROMPT_TEMPLATE.substitute(description=self.cur_task['skeleton'])
+        logging.debug("Code Generation Prompt:")
+        logging.debug(prompt)
         response_text = self.get_response_text(prompt)
         return self.extract_code(response_text)
     
     def gen_py_file(self, test_code_name, code_snippet, test_code):
-        test_code_py = code_snippet + '\n' + test_code
-        with open(test_code_name + '.py', 'w', encoding='utf-8') as f:
+        test_code_py = code_snippet + '\n\n' + test_code
+        with open(os.path.join(self.log_dir, test_code_name + '.py'), 'w', encoding='utf-8') as f:
             f.write(test_code_py)
 
-    def run_unit_test(self, test_code, test_class):
-        module = importlib.import_module(test_code)
-        output = io.StringIO()
+    def run_unit_test(self, module_name, test_class, log_path):
+        module = importlib.import_module(module_name)
         test_suite = unittest.TestLoader().loadTestsFromTestCase(getattr(module, test_class))
-        test_stat = unittest.TextTestRunner(stream=output).run(test_suite)
-        exec_result = output.getvalue()
+        with open(log_path, 'a', encoding='utf-8') as f:
+            test_res = unittest.TextTestRunner(stream=f).run(test_suite)
+        exec_res = dict()
+        for test_case_obj, trace in test_res.failures + test_res.failures:
+            test_method_name = test_case_obj.id().split('.')[-1]
+            code = inspect.getsource(getattr(type(test_case_obj), test_method_name))
+            error = trace.strip().split('\n')[-1]
+            exec_res[code] = error
+        num_tests = test_res.testsRun
 
-        return test_stat, exec_result
+        return exec_res, num_tests
 
-    def test(self, test_code_name, test_classes):
-        res_item = dict()
-        res_item['errors'] = 0
-        res_item['failures'] = 0
-        res_item['exec_result'] = ''
+    def test(self, module_name, test_classes):
+        res = dict()  # map from test code to error message
+        log_path = os.path.join(self.log_dir, module_name + '.log')
+        if os.path.exists(log_path):
+            os.remove(log_path)
+        self.cur_task['num_tests'] = 0
+        num_passes = 0
         for test_class in test_classes:
             try:
-                test_stat, exec_result = self.run_unit_test(test_code_name, test_class)
-                res_item['errors'] += len(test_stat.errors)
-                res_item['failures'] += len(test_stat.failures)
-                res_item['exec_result'] = res_item['exec_result'] + '\n' + exec_result
+                fail_res, num_tests = self.run_unit_test(module_name, test_class, log_path)
+                res.update(fail_res)
+                self.cur_task['num_tests'] += num_tests
+                num_passes += num_tests - len(fail_res)
             except:
                 traceback.print_exc()
+        self.cur_task['num_passes_list'].append(num_passes)
 
-        return res_item
+        return res
 
-    def execute_code(self, code):
+    def execute_code(self, code, iter):
         """
         Execute the given code and return execution results.
 
         :param code: The code to execute.
+        :param iter: The current iteration.
         :return: Execution results.
         """
-        self.gen_py_file(self.cur_task['task_id'], code, self.cur_task['test'])
-        outputs = self.test(self.cur_task['task_id'], self.cur_task['test_classes'])
+        generated_module_name = self.cur_task['task_id'] + '-' + str(iter)
+        self.gen_py_file(generated_module_name, code, self.cur_task['test'])
+        outputs = self.test(generated_module_name, self.cur_task['test_classes'])
         return outputs
 
     def refine_code(self, execution_results):
@@ -145,8 +167,10 @@ class SelfDebugger:
         :return: Refinement result.
         """
         explanation = self.get_response_text(EXPLAIN_PROMPT)
-        exec_res = '\n'.join([f"`{test}`: `{result}`" for test, result in execution_results.items()])
+        exec_res = '\n'.join([f"```\n{code}\n```\n{error}" for code, error in execution_results.items()])
         feedback_prompt = UT_FEEDBACK_PROMPT_TEMPLATE.substitute(exec_res=exec_res)
+        logging.debug("Feedback Prompt:")
+        logging.debug(feedback_prompt)
         refined_code = self.extract_code(self.get_response_text(feedback_prompt))
         return refined_code, explanation
 
@@ -161,24 +185,27 @@ class SelfDebugger:
         success = False
         refined = False  # whether the code has been refined
         self.cur_task = task
+        # keep track of the number of passes for each iteration
+        self.cur_task['num_passes_list'] = []
         code = self.generate_code()
         initial_code = code
         explanation = ''
         logging.debug("Initial Code:")
         logging.debug(code)
         for i in range(self.max_debugging_steps):
-            execution_results = self.execute_code(code)
+            execution_results = self.execute_code(code, i)
             logging.debug("Execution Results:")
             logging.debug(execution_results)
             if self.is_solution_correct(execution_results):
                 success = True
                 break
+            # for the last iteration, no need to refine the code
+            if i == self.max_debugging_steps - 1:
+                break
             code, explanation = self.refine_code(execution_results)
             refined = True
             logging.debug("Refined Code:")
             logging.debug(code)
-        logging.debug("History:")
-        logging.debug('\n'.join([str(item) for item in self.history]))
         res = {
             'initial_code': initial_code,
             'refined_code': code,
@@ -186,8 +213,12 @@ class SelfDebugger:
             'explanation': explanation,
             'success': success,
             'refined': refined,
+            'num_passes_list': self.cur_task['num_passes_list'],
+            'num_tests': self.cur_task['num_tests'],
             'iterations': i + 1,
         }
+        logging.debug("Result:")
+        logging.debug(res)
         return res
 
     def is_solution_correct(self, execution_results):
@@ -197,7 +228,7 @@ class SelfDebugger:
         :param execution_results: The results of code execution.
         :return: Boolean indicating if the solution is correct.
         """
-        return execution_results['errors'] == 0 and execution_results['failures'] == 0
+        return len(execution_results) == 0
 
 
 if __name__ == "__main__":
