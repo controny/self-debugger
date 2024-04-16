@@ -37,13 +37,40 @@ class MBPPDatasetLoader:
         } for problem in problems]
 
 
+class ClassEvalDatasetLoader:
+    def __init__(self):
+        """
+        Initialize the dataset loader and load the ClassEval dataset from HuggingFace.
+        """
+        self.dataset = load_dataset("FudanSELab/ClassEval")
+        # TODO install packages according to "lib_dependencies" field
+
+    def get_problem(self, split, index):
+        """
+        Get a single problem by its index from the specified split.
+
+        :param split: Split of the dataset to retrieve the problem.
+        :param index: Index of the problem to retrieve.
+        :return: A dict representing the problem.
+        """
+        return self.dataset[split][index]
+
+    def get_all_problems(self, split='test'):
+        """
+        Get all problems from the specified split.
+
+        :param split: Split of the dataset to retrieve problems.
+        :return: A list of dicts, each representing a problem description.
+        """
+        problems = list(self.dataset[split])
+        return problems
+
+
 if __name__ == "__main__":
     # Example usage:
-    dataset_loader = MBPPDatasetLoader()
+    dataset_loader = ClassEvalDatasetLoader()
 
     # To iterate over all test problems and their test cases:
     for problem in dataset_loader.get_all_problems('test'):
-        print(problem['description'])
-        print(problem['solution'])
-        print(problem['test_list'])
+        print(problem)
         break

@@ -1,4 +1,6 @@
 outputs/
+*test*
+*.json
 
 .DS_Store
 

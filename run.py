@@ -6,16 +6,13 @@ from multiprocessing import get_context
 import traceback
 import argparse
 import time
-from openai import RateLimitError
+from openai import RateLimitError, BadRequestError
 from self_debugger import SelfDebugger
-from dataset_loader import MBPPDatasetLoader
+from dataset_loader import ClassEvalDatasetLoader
 
 
 def process_problem(inp):
     problem, args = inp
-    description = problem['description']
-    test_list = problem['test_list']
-    
     self_debugger = SelfDebugger(args.model_name,
                                 max_debugging_steps=args.max_debugging_steps,
                                 temperature=args.temperature)
@@ -23,17 +20,22 @@ def process_problem(inp):
     num_retries = 3
     for _ in range(num_retries):
         try:
-            result = self_debugger.debug_code(description, test_list)
-            result.update({
-                'description': description,
-                'test_list': test_list,
-            })
+            result = self_debugger.debug_code(problem)
+            result.update(problem)
             return result
         except RateLimitError as e:
             print(f"Rate Limit Error: {e}")
             time.sleep(60)
+        except BadRequestError as e:
+            if 'context_length_exceeded' in str(e):
+                print("Context length exceeded, retrying with a smaller max debugging step.")
+                self_debugger.max_debugging_steps = int(self_debugger.max_debugging_steps * 0.6)
+            else:
+                traceback.print_exc()
+                break
         except Exception as e:
             traceback.print_exc()
+            break
     return None
 
 
@@ -45,8 +47,8 @@ if __name__ == "__main__":
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
-    # Load the MBPP dataset
-    dataset_loader = MBPPDatasetLoader()
+    # Load the dataset
+    dataset_loader = ClassEvalDatasetLoader()
     problems = dataset_loader.get_all_problems('test')
     if args.debug:
         problems = problems[:5]
@@ -56,18 +58,19 @@ if __name__ == "__main__":
     num_success = 0
     num_total = len(problems)
 
-    save_path = 'outputs/results.jsonl'
-    processed_desc = set()
+    save_path = 'outputs/classeval/results.jsonl'
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    processed_task_ids = set()
     if os.path.exists(save_path):
         with open(save_path, 'r') as jsonfile:
             for line in jsonfile:
                 result = json.loads(line)
-                processed_desc.add(result['description'])
+                processed_task_ids.add(result['task_id'])
                 # also update the success rate
                 num_success += int(result['success'])
     
     # Filter out the processed problems
-    problems = [problem for problem in problems if problem['description'] not in processed_desc]
+    problems = [problem for problem in problems if problem['task_id'] not in processed_task_ids]
     print(f"Number of unprocessed problems: {len(problems)}")
 
     num_workers = args.num_workers

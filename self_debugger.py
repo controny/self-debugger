@@ -1,16 +1,12 @@
-import subprocess
 import openai
 import re
 from string import Template
 import logging
-from func_timeout import func_set_timeout
 import importlib
 import unittest
-import io
 import os
 import sys
 import inspect
-from collections import defaultdict
 import traceback
 
 
@@ -59,6 +55,9 @@ class SelfDebugger:
         response_text = resp.choices[0].message.content
         self.history.append({"role": "assistant", "content": response_text})
         return response_text
+    
+    def get_leading_spaces(self, string):
+        return len(string) - len(string.lstrip())
     
     def add_static_statement(self, code):
         filtered_code_list = []
@@ -115,6 +114,7 @@ class SelfDebugger:
     def run_unit_test(self, module_name, test_class, log_path):
         module = importlib.import_module(module_name)
         test_suite = unittest.TestLoader().loadTestsFromTestCase(getattr(module, test_class))
+        # TODO assign exceptions during the test execution to failures
         with open(log_path, 'a', encoding='utf-8') as f:
             test_res = unittest.TextTestRunner(stream=f).run(test_suite)
         exec_res = dict()
@@ -228,7 +228,8 @@ class SelfDebugger:
         :param execution_results: The results of code execution.
         :return: Boolean indicating if the solution is correct.
         """
-        return len(execution_results) == 0
+        # avoid misleading if all the test execution encounters exceptions
+        return self.cur_task['num_tests'] > 0 and len(execution_results) == 0
 
 
 if __name__ == "__main__":
