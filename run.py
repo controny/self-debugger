@@ -24,10 +24,12 @@ def process_problem(inp):
             result.update(problem)
             return result
         except RateLimitError as e:
+            print("Problem:", problem['task_id'])
             print(f"Rate Limit Error: {e}")
             time.sleep(60)
         except BadRequestError as e:
             if 'context_length_exceeded' in str(e):
+                print("Problem:", problem['task_id'])
                 print("Context length exceeded, retrying with a smaller max debugging step.")
                 self_debugger.max_debugging_steps = int(self_debugger.max_debugging_steps * 0.6)
             else:
@@ -36,6 +38,7 @@ def process_problem(inp):
         except Exception as e:
             traceback.print_exc()
             break
+    print("Failed to process problem", problem['task_id'])
     return None
 
 
@@ -49,7 +52,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     # Load the dataset
     dataset_loader = ClassEvalDatasetLoader()
-    problems = dataset_loader.get_all_problems('test')
+    problems = dataset_loader.get_all_problems()
     if args.debug:
         problems = problems[:5]
     print(f"Number of original problems: {len(problems)}")

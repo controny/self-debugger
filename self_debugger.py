@@ -8,6 +8,7 @@ import os
 import sys
 import inspect
 import traceback
+from dataset_loader import ClassEvalDatasetLoader
 
 
 SYS_PROMPT = "You are an expert programming assistant."
@@ -112,18 +113,24 @@ class SelfDebugger:
             f.write(test_code_py)
 
     def run_unit_test(self, module_name, test_class, log_path):
-        module = importlib.import_module(module_name)
-        test_suite = unittest.TestLoader().loadTestsFromTestCase(getattr(module, test_class))
-        # TODO assign exceptions during the test execution to failures
-        with open(log_path, 'a', encoding='utf-8') as f:
-            test_res = unittest.TextTestRunner(stream=f).run(test_suite)
         exec_res = dict()
-        for test_case_obj, trace in test_res.failures + test_res.failures:
-            test_method_name = test_case_obj.id().split('.')[-1]
-            code = inspect.getsource(getattr(type(test_case_obj), test_method_name))
-            error = trace.strip().split('\n')[-1]
-            exec_res[code] = error
-        num_tests = test_res.testsRun
+        with open(log_path, 'a', encoding='utf-8') as f:
+            try:
+                module = importlib.import_module(module_name)
+                test_suite = unittest.TestLoader().loadTestsFromTestCase(getattr(module, test_class))
+                test_res = unittest.TextTestRunner(stream=f).run(test_suite)
+                num_tests = test_res.testsRun
+                for test_case_obj, trace in test_res.errors + test_res.failures:
+                    test_method_name = test_case_obj.id().split('.')[-1]
+                    code = inspect.getsource(getattr(type(test_case_obj), test_method_name))
+                    error = trace.strip().split('\n')[-1]
+                    exec_res[code] = error
+            except Exception as e:
+                # Capture exceptions outside the test execution, e.g. syntax errors, import errors
+                # Print the exception to the file
+                traceback.print_exc(file=f)
+                exec_res[''] = str(e)
+                num_tests = 1
 
         return exec_res, num_tests
 
@@ -236,24 +243,8 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     # Example usage
     self_debugger = SelfDebugger(max_debugging_steps=3)
-    task = {
-        "task_id": "ClassEval_0",
-        "skeleton": "import logging\nimport datetime\n\nclass AccessGatewayFilter:\n    \"\"\"\n    This class is a filter used for accessing gateway filtering, primarily for authentication and access log recording.\n    \"\"\"\n\n    def __init__(self):\n        pass\n\n    def filter(self, request):\n        \"\"\"\n        Filter the incoming request based on certain rules and conditions.\n        :param request: dict, the incoming request details\n        :return: bool, True if the request is allowed, False otherwise\n        >>> filter = AccessGatewayFilter()\n        >>> filter.filter({'path': '/login', 'method': 'POST'})\n        True\n\n        \"\"\"\n\n\n    def is_start_with(self, request_uri):\n        \"\"\"\n        Check if the request URI starts with certain prefixes.\n        :param request_uri: str, the URI of the request\n        :return: bool, True if the URI starts with certain prefixes, False otherwise\n        >>> filter = AccessGatewayFilter()\n        >>> filter.is_start_with('/api/data')\n        True\n\n        \"\"\"\n\n\n    def get_jwt_user(self, request):\n        \"\"\"\n        Get the user information from the JWT token in the request.\n        :param request: dict, the incoming request details\n        :return: dict or None, the user information if the token is valid, None otherwise\n        >>> filter = AccessGatewayFilter()\n        >>> filter.get_jwt_user({'headers': {'Authorization': {'user': {'name': 'user1'}, 'jwt': 'user1'+str(datetime.date.today())}}})\n        {'user': {'name': 'user1'}\n\n        \"\"\"\n\n    def set_current_user_info_and_log(self, user):\n        \"\"\"\n        Set the current user information and log the access.\n        :param user: dict, the user information\n        :return: None\n        >>> filter = AccessGatewayFilter()\n        >>> user = {'name': 'user1', 'address': '127.0.0.1'}\n        >>> filter.set_current_user_info_and_log(user)\n\n        \"\"\"",
-        "test": "import unittest\n\nclass AccessGatewayFilterTestFilter(unittest.TestCase):\n    def test_filter_1(self):\n        agf = AccessGatewayFilter()\n        request = {'path': '/api/data', 'method': 'GET'}\n        res = agf.filter(request)\n        self.assertTrue(res)\n\n    def test_filter_2(self):\n        agf = AccessGatewayFilter()\n        request = {'path': '/api/data', 'method': 'POST'}\n        res = agf.filter(request)\n        self.assertTrue(res)\n\n    def test_filter_3(self):\n        agf = AccessGatewayFilter()\n        request = {'path': '/login/data', 'method': 'GET'}\n        res = agf.filter(request)\n        self.assertTrue(res)\n\n    def test_filter_4(self):\n        agf = AccessGatewayFilter()\n        request = {'path': '/login/data', 'method': 'POST'}\n        res = agf.filter(request)\n        self.assertTrue(res)\n\n    def test_filter_5(self):\n        agf = AccessGatewayFilter()\n        request = {'path': '/abc', 'method': 'POST',\n                   'headers': {\n                       'Authorization': {'user': {'name': 'user1', 'level': 5, 'address': 'address1'},\n                                         'jwt': 'user1' + str(datetime.date.today())}}}\n        res = agf.filter(request)\n        self.assertTrue(res)\n\n    def test_filter_6(self):\n        agf = AccessGatewayFilter()\n        request = {'path': '/abc', 'method': 'POST',\n                   'headers': {\n                       'Authorization': {'user': {'name': 'user1', 'level': 3, 'address': 'address1'},\n                                         'jwt': 'user1' + str(datetime.date.today() - datetime.timedelta(days=365))}}}\n        res = agf.filter(request)\n        self.assertFalse(res)\n\n    def test_filter_7(self):\n        agf = AccessGatewayFilter()\n        request = {'path': '/abc', 'method': 'POST',\n                   'headers': {\n                       'Authorization': {'user': {'name': 'user1', 'level': 1, 'address': 'address1'},\n                                         'jwt': 'user1' + str(datetime.date.today())}}}\n        res = agf.filter(request)\n        self.assertIsNone(res)\n\n    def test_filter_8(self):\n        agf = AccessGatewayFilter()\n        request = {'path': '/abc', 'method': 'POST',\n                   'headers': {\n                       'Authorization': {'user': {'name': 'user1', 'level': 3, 'address': 'address1'},\n                                         'jwt': 'user2' + str(datetime.date.today() - datetime.timedelta(days=365))}}}\n        res = agf.filter(request)\n        self.assertTrue(res)\n\n\nclass AccessGatewayFilterTestIsStartWith(unittest.TestCase):\n    def test_is_start_with_1(self):\n        agf = AccessGatewayFilter()\n        request_uri = '/api/data'\n        res = agf.is_start_with(request_uri)\n        self.assertTrue(res)\n\n    def test_is_start_with_2(self):\n        agf = AccessGatewayFilter()\n        request_uri = '/admin/settings'\n        res = agf.is_start_with(request_uri)\n        self.assertFalse(res)\n\n    def test_is_start_with_3(self):\n        agf = AccessGatewayFilter()\n        request_uri = '/login/data'\n        res = agf.is_start_with(request_uri)\n        self.assertTrue(res)\n\n    def test_is_start_with_4(self):\n        agf = AccessGatewayFilter()\n        request_uri = '/abc/data'\n        res = agf.is_start_with(request_uri)\n        self.assertFalse(res)\n\n    def test_is_start_with_5(self):\n        agf = AccessGatewayFilter()\n        request_uri = '/def/data'\n        res = agf.is_start_with(request_uri)\n        self.assertFalse(res)\n\n\nclass AccessGatewayFilterTestGetJwtUser(unittest.TestCase):\n    def test_get_jwt_user_1(self):\n        agf = AccessGatewayFilter()\n        request = {\n            'headers': {'Authorization': {'user': {'name': 'user1'}, 'jwt': 'user1' + str(datetime.date.today())}}}\n        res = agf.get_jwt_user(request)\n        self.assertIsNotNone(res)\n\n    def test_get_jwt_user_2(self):\n        agf = AccessGatewayFilter()\n        request = {\n            'headers': {'Authorization': {'user': {'name': 'user2'}, 'jwt': 'user2' + str(datetime.date.today())}}}\n        res = agf.get_jwt_user(request)\n        self.assertIsNotNone(res)\n\n    def test_get_jwt_user_3(self):\n        agf = AccessGatewayFilter()\n        request = {\n            'headers': {'Authorization': {'user': {'name': 'user3'}, 'jwt': 'user3' + str(datetime.date.today())}}}\n        res = agf.get_jwt_user(request)\n        self.assertIsNotNone(res)\n\n    def test_get_jwt_user_4(self):\n        agf = AccessGatewayFilter()\n        request = {\n            'headers': {'Authorization': {'user': {'name': 'user4'}, 'jwt': 'user4' + str(datetime.date.today())}}}\n        res = agf.get_jwt_user(request)\n        self.assertIsNotNone(res)\n\n    def test_get_jwt_user_5(self):\n        agf = AccessGatewayFilter()\n        request = {'headers': {'Authorization': {'user': {'name': 'user1'}, 'jwt': 'user1' + str(\n            datetime.date.today() - datetime.timedelta(days=5))}}}\n        res = agf.get_jwt_user(request)\n        self.assertIsNone(res)\n\n\nclass AccessGatewayFilterTest(unittest.TestCase):\n    def test_AccessGatewayFilter(self):\n        agf = AccessGatewayFilter()\n        request = {'path': '/api/data', 'method': 'GET'}\n        res = agf.filter(request)\n        self.assertTrue(res)\n\n        request_uri = '/api/data'\n        res = agf.is_start_with(request_uri)\n        self.assertTrue(res)\n\n        request = {\n            'headers': {'Authorization': {'user': {'name': 'user1'}, 'jwt': 'user1' + str(datetime.date.today())}}}\n        res = agf.get_jwt_user(request)\n        self.assertIsNotNone(res)",
-        "solution_code": "import logging\nimport datetime\n\n\nclass AccessGatewayFilter:\n\n    def __init__(self):\n        pass\n\n    def filter(self, request):\n        request_uri = request['path']\n        method = request['method']\n\n        if self.is_start_with(request_uri):\n            return True\n\n        try:\n            token = self.get_jwt_user(request)\n            user = token['user']\n            if user['level'] > 2:\n                self.set_current_user_info_and_log(user)\n                return True\n        except:\n            return False\n\n    def is_start_with(self, request_uri):\n        start_with = [\"/api\", '/login']\n        for s in start_with:\n            if request_uri.startswith(s):\n                return True\n        return False\n\n    def get_jwt_user(self, request):\n        token = request['headers']['Authorization']\n        user = token['user']\n        if token['jwt'].startswith(user['name']):\n            jwt_str_date = token['jwt'].split(user['name'])[1]\n            jwt_date = datetime.datetime.strptime(jwt_str_date, \"%Y-%m-%d\")\n            if datetime.datetime.today() - jwt_date >= datetime.timedelta(days=3):\n                return None\n        return token\n\n    def set_current_user_info_and_log(self, user):\n        host = user['address']\n        logging.log(msg=user['name'] + host + str(datetime.datetime.now()), level=1)",
-        "import_statement": [
-            "import logging",
-            "import datetime"
-        ],
-        "class_description": "    \"\"\"\n    This class is a filter used for accessing gateway filtering, primarily for authentication and access log recording.\n    \"\"\"\n",
-        "class_name": "AccessGatewayFilter",
-        "test_classes": [
-            "AccessGatewayFilterTestFilter",
-            "AccessGatewayFilterTestIsStartWith",
-            "AccessGatewayFilterTestGetJwtUser",
-            "AccessGatewayFilterTest"
-        ],
-        "class_constructor": "class AccessGatewayFilter: \n    def __init__(self):\n        pass\n\n",
-        "fields": [],
-    }
-    debugged_code = self_debugger.debug_code(task)
+    dataset_loader = ClassEvalDatasetLoader()
+    problem_idx = 69
+    task = dataset_loader.get_problem(problem_idx)
+    res = self_debugger.debug_code(task)
+    print(res)

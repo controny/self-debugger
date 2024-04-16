@@ -1,4 +1,5 @@
 from datasets import load_dataset
+import os
 
 class MBPPDatasetLoader:
     def __init__(self):
@@ -43,9 +44,9 @@ class ClassEvalDatasetLoader:
         Initialize the dataset loader and load the ClassEval dataset from HuggingFace.
         """
         self.dataset = load_dataset("FudanSELab/ClassEval")
-        # TODO install packages according to "lib_dependencies" field
+        self.problems = list(self.dataset['test'])
 
-    def get_problem(self, split, index):
+    def get_problem(self, index):
         """
         Get a single problem by its index from the specified split.
 
@@ -53,17 +54,16 @@ class ClassEvalDatasetLoader:
         :param index: Index of the problem to retrieve.
         :return: A dict representing the problem.
         """
-        return self.dataset[split][index]
+        return self.problems[index]
 
-    def get_all_problems(self, split='test'):
+    def get_all_problems(self):
         """
         Get all problems from the specified split.
 
         :param split: Split of the dataset to retrieve problems.
         :return: A list of dicts, each representing a problem description.
         """
-        problems = list(self.dataset[split])
-        return problems
+        return self.problems
 
 
 if __name__ == "__main__":

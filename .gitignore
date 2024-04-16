@@ -1,6 +1,11 @@
 outputs/
+explore.ipynb
+
+# skip files produced during the test procedure
 *test*
 *.json
+*.zip
+output_directory/
 
 .DS_Store
 
