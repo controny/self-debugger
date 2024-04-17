@@ -8,6 +8,7 @@ import os
 import sys
 import inspect
 import traceback
+from func_timeout import func_set_timeout, FunctionTimedOut
 from dataset_loader import ClassEvalDatasetLoader
 
 
@@ -111,6 +112,11 @@ class SelfDebugger:
         test_code_py = code_snippet + '\n\n' + test_code
         with open(os.path.join(self.log_dir, test_code_name + '.py'), 'w', encoding='utf-8') as f:
             f.write(test_code_py)
+    
+    @func_set_timeout(5)  # set a timeout
+    def _run_tests(self, stream, test_suite):
+        runner = unittest.TextTestRunner(stream=stream)
+        return runner.run(test_suite)
 
     def run_unit_test(self, module_name, test_class, log_path):
         exec_res = dict()
@@ -118,14 +124,14 @@ class SelfDebugger:
             try:
                 module = importlib.import_module(module_name)
                 test_suite = unittest.TestLoader().loadTestsFromTestCase(getattr(module, test_class))
-                test_res = unittest.TextTestRunner(stream=f).run(test_suite)
+                test_res = self._run_tests(f, test_suite)
                 num_tests = test_res.testsRun
                 for test_case_obj, trace in test_res.errors + test_res.failures:
                     test_method_name = test_case_obj.id().split('.')[-1]
                     code = inspect.getsource(getattr(type(test_case_obj), test_method_name))
                     error = trace.strip().split('\n')[-1]
                     exec_res[code] = error
-            except Exception as e:
+            except (FunctionTimedOut, Exception) as e:
                 # Capture exceptions outside the test execution, e.g. syntax errors, import errors
                 # Print the exception to the file
                 traceback.print_exc(file=f)
@@ -244,7 +250,7 @@ if __name__ == "__main__":
     # Example usage
     self_debugger = SelfDebugger(max_debugging_steps=3)
     dataset_loader = ClassEvalDatasetLoader()
-    problem_idx = 69
+    problem_idx = 85
     task = dataset_loader.get_problem(problem_idx)
     res = self_debugger.debug_code(task)
     print(res)
