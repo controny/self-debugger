@@ -17,23 +17,29 @@ EXPLAIN_PROMPT = "Explain the Python code line by line."
 CODE_GEN_PROMPT_TEMPLATE = Template("Complete the class in the following code:\n${description}\nReturn the pure function code with no additional text or markup.")
 UT_FEEDBACK_PROMPT_TEMPLATE = Template("The code above fails the given unit tests:\n${exec_res}\nPlease fix the Python code.")
 
+# tell the model to explain the failed test cases
+UT_EXPLAIN_PROMPT_TEMPLATE = Template("The code above fails the given unit tests:\n${exec_res}\nPlease explain the failure and then rewrite the whole Python code.")
+
 class SelfDebugger:
 
-    def __init__(self, model_name='gpt-3.5-turbo', max_debugging_steps=10, temperature=0.0):
+    def __init__(self, log_dir, model_name='gpt-3.5-turbo', refine_type='ut_explain', max_debugging_steps=10, temperature=0.0):
         """
         Initialize the self-debugger.
 
+        :param log_dir: The directory to save logs and generated modules.
         :param model_name: The name of the language model to use.
+        :param refine_type: The type of refinement to use ('baseline' or 'ut_explain').
         :param max_debugging_steps: Maximum number of debugging iterations.
         :param temperature: The temperature parameter for the language model.
         """
+        self.refine_type = refine_type
         self.model_name = model_name
         self.llm_client = openai.OpenAI()
         self.history = []
         self.max_debugging_steps = max_debugging_steps
         self.temperature = temperature
+        self.log_dir = log_dir
         self.cur_task = None
-        self.log_dir = 'outputs/classeval'
         os.makedirs(self.log_dir, exist_ok=True)
         # Get the absolute path of the directory of the module
         module_dir = os.path.abspath(self.log_dir)
@@ -179,12 +185,19 @@ class SelfDebugger:
         :param execution_results: The results of code execution.
         :return: Refinement result.
         """
-        explanation = self.get_response_text(EXPLAIN_PROMPT)
         exec_res = '\n'.join([f"```\n{code}\n```\n{error}" for code, error in execution_results.items()])
-        feedback_prompt = UT_FEEDBACK_PROMPT_TEMPLATE.substitute(exec_res=exec_res)
+        if self.refine_type == 'baseline':
+            explanation = self.get_response_text(EXPLAIN_PROMPT)
+            feedback_prompt_template = UT_FEEDBACK_PROMPT_TEMPLATE
+        elif self.refine_type == 'ut_explain':
+            feedback_prompt_template = UT_EXPLAIN_PROMPT_TEMPLATE
+        feedback_prompt = feedback_prompt_template.substitute(exec_res=exec_res)
         logging.debug("Feedback Prompt:")
         logging.debug(feedback_prompt)
-        refined_code = self.extract_code(self.get_response_text(feedback_prompt))
+        feedback = self.get_response_text(feedback_prompt)
+        if self.refine_type == 'ut_explain':
+            explanation = feedback
+        refined_code = self.extract_code(feedback)
         return refined_code, explanation
 
     def debug_code(self, task):
@@ -217,6 +230,8 @@ class SelfDebugger:
                 break
             code, explanation = self.refine_code(execution_results)
             refined = True
+            logging.debug("Explanation:")
+            logging.debug(explanation)
             logging.debug("Refined Code:")
             logging.debug(code)
         res = {
@@ -230,8 +245,6 @@ class SelfDebugger:
             'num_tests': self.cur_task['num_tests'],
             'iterations': i + 1,
         }
-        logging.debug("Result:")
-        logging.debug(res)
         return res
 
     def is_solution_correct(self, execution_results):
@@ -248,7 +261,7 @@ class SelfDebugger:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     # Example usage
-    self_debugger = SelfDebugger(max_debugging_steps=3)
+    self_debugger = SelfDebugger(max_debugging_steps=3, refine_type='ut_explain')
     dataset_loader = ClassEvalDatasetLoader()
     problem_idx = 85
     task = dataset_loader.get_problem(problem_idx)

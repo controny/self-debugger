@@ -13,7 +13,9 @@ from dataset_loader import ClassEvalDatasetLoader
 
 def process_problem(inp):
     problem, args = inp
-    self_debugger = SelfDebugger(args.model_name,
+    self_debugger = SelfDebugger(args.log_dir,
+                                args.model_name,
+                                refine_type=args.refine_type,
                                 max_debugging_steps=args.max_debugging_steps,
                                 temperature=args.temperature)
 
@@ -46,6 +48,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--max_debugging_steps', type=int, default=5)
     parser.add_argument('--model_name', type=str, default='gpt-3.5-turbo')
+    parser.add_argument('--refine_type', type=str, default='ut_explain')
     parser.add_argument('--temperature', type=float, default=0.0)
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--debug', action='store_true')
@@ -61,7 +64,8 @@ if __name__ == "__main__":
     num_success = 0
     num_total = len(problems)
 
-    save_path = 'outputs/classeval/results.jsonl'
+    args.log_dir = f'outputs/classeval-{args.model_name}-{args.refine_type}'
+    save_path = os.path.join(args.log_dir, 'results.jsonl')
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     processed_task_ids = set()
     if os.path.exists(save_path):
